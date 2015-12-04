@@ -1,0 +1,3 @@
+[submodule "ripcord"]
+	path = ripcord
+	url = https://github.com/odom/ripcord.git
