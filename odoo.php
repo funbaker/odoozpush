@@ -279,13 +279,13 @@ class BackendOdoo extends BackendDiff {
 
       switch ($event['class']) {
         case 'public':
-          $message->sensivity = 0;
+          $message->sensitivity = 0;
           break;
         case 'private':
-          $message->sensivity = 2;
+          $message->sensitivity = 2;
           break;
         case 'confidential':
-          $message->sensivity = 3;
+          $message->sensitivity = 3;
           break;
       }
 
@@ -322,7 +322,7 @@ class BackendOdoo extends BackendDiff {
         return $category['name'];
       }, $categories);
 
-      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true)) . ')';
+      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
       return $message;
     }
 
