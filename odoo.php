@@ -21,6 +21,7 @@ class BackendOdoo extends BackendDiff {
 
     if ($this->uid) {
       $this->models = ripcord::client(ODOO_SERVER . '/xmlrpc/2/object');
+      $this->models->_throwExceptions = true;
       $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $password,
         'res.users', 'search_read', [[
           ['id', '=', $this->uid]
@@ -35,6 +36,7 @@ class BackendOdoo extends BackendDiff {
       ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::Logon: $partners = (' . print_r($partners, true)) . ')';
 
       $this->partnerID = $partners[0]['partner_id'][0];
+      ZLOG::Write(LOGLEVEL_INFO, 'Odoo:Logon: Logged in with partner/user id ' . $this->partnerID . '/' . $this->uid);
       return true;
     }
     return false;
@@ -103,14 +105,22 @@ class BackendOdoo extends BackendDiff {
     $messages = [];
 
     if ($folderid == 'calendar') {
-      $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'calendar.event', 'search_read', [[
-          ['partner_ids', 'in', [$this->partnerID]],
-          ['write_date', '>=', $cutoffdate]
-        ]], [
-          'fields' => ['id', 'write_date']
-        ]
-      );
+      try {
+        $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+          'calendar.event', 'search_read', [[
+            ['partner_ids', 'in', [$this->partnerID]],
+            ['write_date', '>=', $cutoffdate]
+          ]], [
+            'fields' => ['id', 'write_date']
+          ]
+        );
+      }
+      catch (Exception $e) {
+        if ($e->faultCode == 2) {
+          ZLog::Write(LOGLEVEL_WARN, 'Error retrieving events.
+            Please make sure that the calendar module is installed');
+        }
+      }
 
       ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessageList: $events = (' . print_r($events, true)) . ')';
 
