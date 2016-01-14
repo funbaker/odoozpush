@@ -178,8 +178,10 @@ class BackendOdoo extends BackendDiff {
       ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
 
       $message = new SyncAppointment();
+      $message->uid = $event['id'];
       $message->dtstamp = strtotime($event['write_date']);
       $message->starttime = strtotime($event['start']);
+      $message->timezone = $this->getUTC();
       $message->subject = $event['name'];
       $message->organizername = $event['user_id'][1];
       $message->organizeremail = $user['email'];
@@ -317,6 +319,7 @@ class BackendOdoo extends BackendDiff {
         $message->bodytruncated = true;
       }
       $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
+      $message->asbody = new SyncBaseBody();
 
       $message->categories = array_map(function ($category) {
         return $category['name'];
@@ -366,6 +369,10 @@ class BackendOdoo extends BackendDiff {
 
 	public function MoveMessage($folderid, $id, $newfolderid, $contentParameters) {
     return false;
+  }
+
+  protected function getUTC() {
+    return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
   }
 }
 ?>
