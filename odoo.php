@@ -10,6 +10,10 @@ class BackendOdoo extends BackendDiff {
   protected $models = null;
   protected $partnerID = false;
 
+  public function GetSupportedASVersion() {
+        return ZPush::ASV_14;
+  }
+
   public function Logon($username, $domain, $password) {
     $common = ripcord::client(ODOO_SERVER . '/xmlrpc/2/common');
     $this->uid = $common->authenticate(ODOO_DB, $username, $password, []);
