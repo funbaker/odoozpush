@@ -152,7 +152,11 @@ class BackendOdoo extends BackendDiff {
         ]],
         ['fields' => []]
       );
-      if (!count($events)) return false;
+      if (!count($events)) {
+        $message = new SyncAppointment();
+        $message->deleted = 1;
+        return $message;
+      }
       $event = $events[0];
 
       $users = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
