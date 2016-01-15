@@ -141,225 +141,229 @@ class BackendOdoo extends BackendDiff {
 	public function GetMessage($folderid, $id, $contentparameters) {
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage(' . $folderid . ', ' . $id . ', ...)');
 
-    $truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
-
     if ($folderid == 'calendar') {
-      $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'calendar.event', 'search_read', [['|', '&',
-          ['user_id', '=', $this->uid],
-          ['partner_ids', 'in', [$this->partnerID]],
-          ['id', '=', intval(substr($id, 6))]
-        ]],
-        ['fields' => []]
-      );
-      if (!count($events)) {
-        $message = new SyncAppointment();
-        $message->deleted = 1;
-        return $message;
-      }
-      $event = $events[0];
-
-      $users = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'res.users', 'search_read', [[
-          ['id', '=', $event['user_id'][0]]
-        ]], [
-          'fields' => ['email']
-        ]
-      );
-      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $users = (' . print_r($users, true)) . ')';
-      if (!count($users)) return false;
-      $user = $users[0];
-
-      $attendees = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'calendar.attendee', 'read', [$event['attendee_ids']], [
-          'fields' => [
-            'cn', 'email', 'state'
-          ]
-        ]
-      );
-      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $attendees = (' . print_r($attendees, true)) . ')';
-
-      $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'calendar.event.type', 'read', [$event['categ_ids']], ['fields' => []]);
-      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
-
-      $message = new SyncAppointment();
-      $message->uid = $event['id'];
-      $message->dtstamp = strtotime($event['write_date']);
-      $message->starttime = strtotime($event['start']);
-      $message->timezone = $this->getUTC();
-      $message->subject = $event['name'];
-
-      if (count($attendees) != 0) {
-        $message->organizername = $event['user_id'][1];
-        $message->organizeremail = $user['email'];
-      }
-
-      $message->location = $event['location'];
-      $message->endtime = strtotime($event['stop']);
-
-      if ($event['recurrency']) {
-        $recurrence = new SyncRecurrence();
-        switch ($event['rrule_type']) {
-          case 'daily':
-            $recurrence->type = 0;
-            break;
-          case 'weekly':
-            $recurrence->type = 1;
-            break;
-          case 'monthly':
-            $recurrence->type = 2;
-            if ($event['month_by'] == 'day') {
-              $recurrence->type = 3;
-            }
-            break;
-          case 'yearly':
-            $recurrence->type = 5;
-            break;
-        }
-        $recurrence->until = strtotime($event['final_date']);
-        $recurrence->occurrences = intval($event['count']);
-        $recurrence->interval = intval($event['interval']);
-
-        //weekly
-        if ($recurrence->type == 1) {
-          $recurrence->dayofweek = 0;
-          if ($event['su']) $recurrence->dayofweek += 1;
-          if ($event['mo']) $recurrence->dayofweek += 2;
-          if ($event['tu']) $recurrence->dayofweek += 4;
-          if ($event['we']) $recurrence->dayofweek += 8;
-          if ($event['th']) $recurrence->dayofweek += 16;
-          if ($event['fr']) $recurrence->dayofweek += 32;
-          if ($event['sa']) $recurrence->dayofweek += 64;
-        }
-
-        //monthly
-        if ($recurrence->type == 2) {
-          $recurrence->dayofmonth = intval($event['day']);
-        }
-
-        //monthly on nth day
-        if ($recurrence->type == 3) {
-          $recurrence->dayofweek = 0;
-
-          switch ($event['byday']) {
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-              $recurrence->weekofmonth = intval($event['byday']);
-              break;
-            case '-1':
-              $recurrence->weekofmonth = 5;
-              break;
-          }
-
-          switch ($event['week_list']) {
-            case 'SU':
-              $recurrence->dayofweek += 1;
-              break;
-            case 'MO':
-              $recurrence->dayofweek += 2;
-              break;
-            case 'TU':
-              $recurrence->dayofweek += 4;
-              break;
-            case 'WE':
-              $recurrence->dayofweek += 8;
-              break;
-            case 'TH':
-              $recurrence->dayofweek += 16;
-              break;
-            case 'FR':
-              $recurrence->dayofweek += 32;
-              break;
-            case 'SA':
-              $recurrence->dayofweek += 64;
-              break;
-          }
-        }
-
-        if ($recurrence->type == 5) {
-          $start_date = strtotime($event['start_date']);
-          $recurrence->monthofyear = intval(date('n', $start_date));
-        }
-
-        $message->recurrence = $recurrence;
-      }
-
-      switch ($event['class']) {
-        case 'public':
-          $message->sensitivity = 0;
-          break;
-        case 'private':
-          $message->sensitivity = 2;
-          break;
-        case 'confidential':
-          $message->sensitivity = 3;
-          break;
-      }
-
-      switch ($event['show_as']) {
-        case 'free':
-          $message->busystatus = 0;
-          break;
-        case 'busy':
-          $message->busystatus = 2;
-          break;
-      }
-
-      $message->alldayevent = $event['allday'];
-      $message->reminder = 30;//TODO
-      $message->meetingstatus = count($attendees) == 0 ? 0 : 1;
-
-      $message->attendees = array_map(function ($attendee) use ($message) {
-        $syncattendee = new SyncAttendee();
-        $syncattendee->email = $attendee['email'];
-        $syncattendee->name = $attendee['cn'];
-
-        $syncattendee->attendeetype = 1;
-        switch ($attendee['state']) {
-          case 'needsAction':
-            $syncattendee->attendeestatus = 5;
-            break;
-          case 'tentative':
-            $syncattendee->attendeestatus = 2;
-            break;
-          case 'declined':
-            $syncattendee->attendeestatus = 4;
-            break;
-          case 'accepted':
-            $syncattendee->attendeestatus = 3;
-            break;
-          default:
-            $syncattendee->attendeestatus = 0;
-        }
-
-        return $syncattendee;
-      }, $attendees);
-
-      $body = $event['description'];
-      $message->bodytruncated = false;
-      if(strlen($body) > $truncsize) {
-        $body = Utils::Utf8_truncate($body, $truncsize);
-        $message->bodytruncated = true;
-      }
-      $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
-      $message->asbody = new SyncBaseBody();
-
-      $message->categories = array_map(function ($category) {
-        return $category['name'];
-      }, $categories);
-
-      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
-      return $message;
+      return $this->GetEvent($id, $contentparameters);
     }
 
     return false;
   }
 
-	public function StatMessage($folderid, $id) {
+  protected function GetEvent($id, $contentparameters) {
+    $truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
+
+    $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.event', 'search_read', [['|', '&',
+        ['user_id', '=', $this->uid],
+        ['partner_ids', 'in', [$this->partnerID]],
+        ['id', '=', intval(substr($id, 6))]
+      ]],
+      ['fields' => []]
+    );
+    if (!count($events)) {
+      $message = new SyncAppointment();
+      $message->deleted = 1;
+      return $message;
+    }
+    $event = $events[0];
+
+    $users = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'res.users', 'search_read', [[
+        ['id', '=', $event['user_id'][0]]
+      ]], [
+        'fields' => ['email']
+      ]
+    );
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $users = (' . print_r($users, true)) . ')';
+    if (!count($users)) return false;
+    $user = $users[0];
+
+    $attendees = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.attendee', 'read', [$event['attendee_ids']], [
+        'fields' => [
+          'cn', 'email', 'state'
+        ]
+      ]
+    );
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $attendees = (' . print_r($attendees, true)) . ')';
+
+    $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.event.type', 'read', [$event['categ_ids']], ['fields' => []]);
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
+
+    $message = new SyncAppointment();
+    $message->uid = $event['id'];
+    $message->dtstamp = strtotime($event['write_date']);
+    $message->starttime = strtotime($event['start']);
+    $message->timezone = $this->getUTC();
+    $message->subject = $event['name'];
+
+    if (count($attendees) != 0) {
+      $message->organizername = $event['user_id'][1];
+      $message->organizeremail = $user['email'];
+    }
+
+    $message->location = $event['location'];
+    $message->endtime = strtotime($event['stop']);
+
+    if ($event['recurrency']) {
+      $recurrence = new SyncRecurrence();
+      switch ($event['rrule_type']) {
+        case 'daily':
+          $recurrence->type = 0;
+          break;
+        case 'weekly':
+          $recurrence->type = 1;
+          break;
+        case 'monthly':
+          $recurrence->type = 2;
+          if ($event['month_by'] == 'day') {
+            $recurrence->type = 3;
+          }
+          break;
+        case 'yearly':
+          $recurrence->type = 5;
+          break;
+      }
+      $recurrence->until = strtotime($event['final_date']);
+      $recurrence->occurrences = intval($event['count']);
+      $recurrence->interval = intval($event['interval']);
+
+      //weekly
+      if ($recurrence->type == 1) {
+        $recurrence->dayofweek = 0;
+        if ($event['su']) $recurrence->dayofweek += 1;
+        if ($event['mo']) $recurrence->dayofweek += 2;
+        if ($event['tu']) $recurrence->dayofweek += 4;
+        if ($event['we']) $recurrence->dayofweek += 8;
+        if ($event['th']) $recurrence->dayofweek += 16;
+        if ($event['fr']) $recurrence->dayofweek += 32;
+        if ($event['sa']) $recurrence->dayofweek += 64;
+      }
+
+      //monthly
+      if ($recurrence->type == 2) {
+        $recurrence->dayofmonth = intval($event['day']);
+      }
+
+      //monthly on nth day
+      if ($recurrence->type == 3) {
+        $recurrence->dayofweek = 0;
+
+        switch ($event['byday']) {
+          case '1':
+          case '2':
+          case '3':
+          case '4':
+          case '5':
+            $recurrence->weekofmonth = intval($event['byday']);
+            break;
+          case '-1':
+            $recurrence->weekofmonth = 5;
+            break;
+        }
+
+        switch ($event['week_list']) {
+          case 'SU':
+            $recurrence->dayofweek += 1;
+            break;
+          case 'MO':
+            $recurrence->dayofweek += 2;
+            break;
+          case 'TU':
+            $recurrence->dayofweek += 4;
+            break;
+          case 'WE':
+            $recurrence->dayofweek += 8;
+            break;
+          case 'TH':
+            $recurrence->dayofweek += 16;
+            break;
+          case 'FR':
+            $recurrence->dayofweek += 32;
+            break;
+          case 'SA':
+            $recurrence->dayofweek += 64;
+            break;
+        }
+      }
+
+      if ($recurrence->type == 5) {
+        $start_date = strtotime($event['start_date']);
+        $recurrence->monthofyear = intval(date('n', $start_date));
+      }
+
+      $message->recurrence = $recurrence;
+    }
+
+    switch ($event['class']) {
+      case 'public':
+        $message->sensitivity = 0;
+        break;
+      case 'private':
+        $message->sensitivity = 2;
+        break;
+      case 'confidential':
+        $message->sensitivity = 3;
+        break;
+    }
+
+    switch ($event['show_as']) {
+      case 'free':
+        $message->busystatus = 0;
+        break;
+      case 'busy':
+        $message->busystatus = 2;
+        break;
+    }
+
+    $message->alldayevent = $event['allday'];
+    $message->reminder = 30;//TODO
+    $message->meetingstatus = count($attendees) == 0 ? 0 : 1;
+
+    $message->attendees = array_map(function ($attendee) use ($message) {
+      $syncattendee = new SyncAttendee();
+      $syncattendee->email = $attendee['email'];
+      $syncattendee->name = $attendee['cn'];
+
+      $syncattendee->attendeetype = 1;
+      switch ($attendee['state']) {
+        case 'needsAction':
+          $syncattendee->attendeestatus = 5;
+          break;
+        case 'tentative':
+          $syncattendee->attendeestatus = 2;
+          break;
+        case 'declined':
+          $syncattendee->attendeestatus = 4;
+          break;
+        case 'accepted':
+          $syncattendee->attendeestatus = 3;
+          break;
+        default:
+          $syncattendee->attendeestatus = 0;
+      }
+
+      return $syncattendee;
+    }, $attendees);
+
+    $body = $event['description'];
+    $message->bodytruncated = false;
+    if(strlen($body) > $truncsize) {
+      $body = Utils::Utf8_truncate($body, $truncsize);
+      $message->bodytruncated = true;
+    }
+    $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
+    $message->asbody = new SyncBaseBody();
+
+    $message->categories = array_map(function ($category) {
+      return $category['name'];
+    }, $categories);
+
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
+    return $message;
+  }
+
+  public function StatMessage($folderid, $id) {
     if ($folderid == 'calendar') {
       $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
         'calendar.event', 'search_read', [[
