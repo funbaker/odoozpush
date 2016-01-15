@@ -107,7 +107,8 @@ class BackendOdoo extends BackendDiff {
     if ($folderid == 'calendar') {
       try {
         $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-          'calendar.event', 'search_read', [[
+          'calendar.event', 'search_read', [['|', '&',
+            ['user_id', '=', $this->uid],
             ['partner_ids', 'in', [$this->partnerID]],
             ['write_date', '>=', $cutoffdate]
           ]], [
@@ -144,7 +145,8 @@ class BackendOdoo extends BackendDiff {
 
     if ($folderid == 'calendar') {
       $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'calendar.event', 'search_read', [[
+        'calendar.event', 'search_read', [['|', '&',
+          ['user_id', '=', $this->uid],
           ['partner_ids', 'in', [$this->partnerID]],
           ['id', '=', intval(substr($id, 6))]
         ]],
@@ -183,8 +185,11 @@ class BackendOdoo extends BackendDiff {
       $message->starttime = strtotime($event['start']);
       $message->timezone = $this->getUTC();
       $message->subject = $event['name'];
-      $message->organizername = $event['user_id'][1];
-      $message->organizeremail = $user['email'];
+
+      if (count($attendees) != 0) {
+        $message->organizername = $event['user_id'][1];
+        $message->organizeremail = $user['email'];
+      }
 
       $message->location = $event['location'];
       $message->endtime = strtotime($event['stop']);
