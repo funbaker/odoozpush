@@ -302,7 +302,7 @@ class BackendOdoo extends BackendDiff {
 
       $message->alldayevent = $event['allday'];
       $message->reminder = 30;//TODO
-      $message->meetingstatus = 1;
+      $message->meetingstatus = count($attendees) == 0 ? 0 : 1;
 
       $message->attendees = array_map(function ($attendee) {
         $syncattendee = new SyncAttendee();
