@@ -173,7 +173,7 @@ class BackendOdoo extends BackendDiff {
       $attendees = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
         'calendar.attendee', 'read', [$event['attendee_ids']], [
           'fields' => [
-            'cn', 'email'
+            'cn', 'email', 'state'
           ]
         ]
       );
@@ -313,10 +313,28 @@ class BackendOdoo extends BackendDiff {
       $message->reminder = 30;//TODO
       $message->meetingstatus = count($attendees) == 0 ? 0 : 1;
 
-      $message->attendees = array_map(function ($attendee) {
+      $message->attendees = array_map(function ($attendee) use ($message) {
         $syncattendee = new SyncAttendee();
         $syncattendee->email = $attendee['email'];
         $syncattendee->name = $attendee['cn'];
+
+        $syncattendee->attendeetype = 1;
+        switch ($attendee['state']) {
+          case 'needsAction':
+            $syncattendee->attendeestatus = 5;
+            break;
+          case 'tentative':
+            $syncattendee->attendeestatus = 2;
+            break;
+          case 'declined':
+            $syncattendee->attendeestatus = 4;
+            break;
+          case 'accepted':
+            $syncattendee->attendeestatus = 3;
+            break;
+          default:
+            $syncattendee->attendeestatus = 0;
+        }
 
         return $syncattendee;
       }, $attendees);
