@@ -63,6 +63,7 @@ class BackendOdoo extends BackendDiff {
     $folders = [];
     $folders[] = $this->StatFolder('calendar');
     $folders[] = $this->StatFolder('partners');
+    $folders[] = $this->StatFolder('tasks');
 
     return $folders;
   }
@@ -94,6 +95,14 @@ class BackendOdoo extends BackendDiff {
       $folder->parentid = "0";
       $folder->displayname = "Partners";
       $folder->type = SYNC_FOLDER_TYPE_CONTACT;
+      return $folder;
+    }
+    else if ($id == 'tasks') {
+      $folder = new SyncFolder();
+      $folder->serverid = $id;
+      $folder->parentid = "0";
+      $folder->displayname = "Tasks";
+      $folder->type = SYNC_FOLDER_TYPE_TASK;
       return $folder;
     }
     return false;
@@ -162,6 +171,34 @@ class BackendOdoo extends BackendDiff {
         ];
       }
     }
+    else if ($folderid == 'tasks') {
+      try {
+        $tasks = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+          'project.task', 'search_read', [[
+            ['user_id', '=', $this->uid],
+            ['write_date', '>=', $cutoffdate]
+          ]], [
+            'fields' => ['id', 'write_date']
+          ]
+        );
+      }
+      catch (Exception $e) {
+        if ($e->faultCode == 2) {
+          ZLog::Write(LOGLEVEL_WARN, 'Error retrieving tasks.
+            Please make sure that the project module is installed');
+        }
+      }
+
+      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessageList: $tasks = (' . print_r($tasks, true)) . ')';
+
+      foreach($tasks as $task) {
+        $messages[] = [
+          'id' => 'task_' . $task['id'],
+          'mod' => strtotime($task['write_date']),
+          'flags' => 1
+        ];
+      }
+    }
 
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessageList: $messages = (' . print_r($messages, true)) . ')';
     return $messages;
@@ -176,6 +213,9 @@ class BackendOdoo extends BackendDiff {
     }
     else if ($folderid == 'partners') {
       return $this->GetPartner($id, $contentparameters);
+    }
+    else if ($folderid == 'tasks') {
+      return $this->GetTask($id, $contentparameters);
     }
 
     return false;
@@ -467,6 +507,77 @@ class BackendOdoo extends BackendDiff {
     return $message;
   }
 
+  protected function GetTask($id, $contentparameters) {
+    $truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
+
+    $tasks = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'project.task', 'search_read', [[
+        ['user_id', '=', $this->uid],
+        ['id', '=', intval(substr($id, 5))]
+      ]], [
+        'fields' => [
+          'stage_id',
+          'tag_ids',
+          'description',
+          'date_last_stage_update',
+          'date_deadline',
+          'priority',
+          'date_start',
+          'name'
+        ]
+      ]
+    );
+    if (!count($tasks)) {
+      $message = new SyncContact();
+      $message->deleted = 1;
+      return $message;
+    }
+
+    $task = $tasks[0];
+
+    $stage = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'project.task.type', 'read', [$task['stage_id'][0]], ['fields' => []]);
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $stage = (' . print_r($stage, true)) . ')';
+    if (count($stage) == 0) {
+      return false;
+    }
+
+    $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'project.tags', 'read', [$task['tag_ids']], ['fields' => []]);
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
+
+    $message = new SyncTask();
+
+    $body = $task['description'];
+    $message->bodytruncated = false;
+    if(strlen($body) > $truncsize) {
+      $body = Utils::Utf8_truncate($body, $truncsize);
+      $message->bodytruncated = true;
+    }
+    $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
+    $message->asbody = new SyncBaseBody();
+
+    $message->complete = 0;
+    if ($stage['fold']) {
+      $message->complete = 1;
+      $message->datecompleted = strtotime($task['date_last_stage_update']);
+    }
+
+    if ($task['date_deadline']) {
+      $message->duedate = strtotime($task['date_deadline']);
+      $message->utcduedate = strtotime($task['date_deadline']);
+    }
+
+    $message->importance = intval($task['priority']);
+    $message->sensitivity = 0;
+    $message->startdate = strtotime($task['date_start']);
+    $message->utcstartdate = strtotime($task['date_start']);
+    $message->subject = $task['name'];
+
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
+    return $message;
+  }
+
   public function StatMessage($folderid, $id) {
     if ($folderid == 'calendar') {
       $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
@@ -501,6 +612,24 @@ class BackendOdoo extends BackendDiff {
       return [
         'id' => 'partner_' . $partner['id'],
         'mod' => strtotime($partner['write_date']),
+        'flags' => 1
+      ];
+    }
+    else if ($folderid == 'tasks') {
+      $tasks = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'project.task', 'search_read', [[
+          ['id', '=', intval(substr($id, 5))]
+        ]], [
+          'fields' => ['id', 'write_date']
+        ]
+      );
+
+      if (!count($tasks)) return false;
+      $task = $tasks[0];
+
+      return [
+        'id' => 'task_' . $task['id'],
+        'mod' => strtotime($task['write_date']),
         'flags' => 1
       ];
     }
