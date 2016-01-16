@@ -167,6 +167,7 @@ class BackendOdoo extends BackendDiff {
     return $messages;
   }
 
+
 	public function GetMessage($folderid, $id, $contentparameters) {
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage(' . $folderid . ', ' . $id . ', ...)');
 
@@ -400,6 +401,7 @@ class BackendOdoo extends BackendDiff {
 
     $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
       'res.partner', 'search_read', [[
+        ['is_company', '!=', 'True'],
         ['id', '=', intval(substr($id, 8))]
       ]], [
         'fields' => []
@@ -422,8 +424,10 @@ class BackendOdoo extends BackendDiff {
     $message->businesscity = $partner['city'];
     if ($partner['country_id']) $message->businesscountry = $partner['country_id'][1];
     $message->businesspostalcode = $partner['zip'];
+
     if ($partner['state_id']) $message->businessstate = $partner['state_id'][1];
     $message->businessstreet = $partner['street'];
+
     $message->businessfaxnumber = $partner['fax'];
     $message->businessphonenumber = $partner['phone'];
     if ($partner['company_id']) $message->companyname = $partner['company_id'][1];
