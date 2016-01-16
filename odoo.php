@@ -62,6 +62,7 @@ class BackendOdoo extends BackendDiff {
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetFolderList()');
     $folders = [];
     $folders[] = $this->StatFolder('calendar');
+    $folders[] = $this->StatFolder('partners');
 
     return $folders;
   }
@@ -85,6 +86,14 @@ class BackendOdoo extends BackendDiff {
       $folder->parentid = "0";
       $folder->displayname = "Calendar";
       $folder->type = SYNC_FOLDER_TYPE_APPOINTMENT;
+      return $folder;
+    }
+    else if ($id == 'partners') {
+      $folder = new SyncFolder();
+      $folder->serverid = $id;
+      $folder->parentid = "0";
+      $folder->displayname = "Partners";
+      $folder->type = SYNC_FOLDER_TYPE_CONTACT;
       return $folder;
     }
     return false;
@@ -133,6 +142,26 @@ class BackendOdoo extends BackendDiff {
         ];
       }
     }
+    else if ($folderid == 'partners') {
+      $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'res.partner', 'search_read', [[
+          ['is_company', '!=', 'True'],
+          ['write_date', '>=', $cutoffdate]
+        ]], [
+          'fields' => ['id', 'write_date']
+        ]
+      );
+
+      ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessageList: $partners = (' . print_r($partners, true)) . ')';
+
+      foreach($partners as $partner) {
+        $messages[] = [
+          'id' => 'partner_' . $partner['id'],
+          'mod' => strtotime($partner['write_date']),
+          'flags' => 1
+        ];
+      }
+    }
 
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessageList: $messages = (' . print_r($messages, true)) . ')';
     return $messages;
@@ -143,6 +172,9 @@ class BackendOdoo extends BackendDiff {
 
     if ($folderid == 'calendar') {
       return $this->GetEvent($id, $contentparameters);
+    }
+    else if ($folderid == 'partners') {
+      return $this->GetPartner($id, $contentparameters);
     }
 
     return false;
@@ -363,6 +395,74 @@ class BackendOdoo extends BackendDiff {
     return $message;
   }
 
+  protected function GetPartner($id, $contentparameters) {
+    $truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
+
+    $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'res.partner', 'search_read', [[
+        ['id', '=', intval(substr($id, 8))]
+      ]], [
+        'fields' => []
+      ]
+    );
+    if (!count($partners)) {
+      $message = new SyncContact();
+      $message->deleted = 1;
+      return $message;
+    }
+
+    $partner = $partners[0];
+
+    $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'res.partner.category', 'read', [$partner['category_id']], ['fields' => []]);
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
+
+    $message = new SyncContact();
+    $message->birthday = strtotime($partner['birthdate']);
+    $message->businesscity = $partner['city'];
+    if ($partner['country_id']) $message->businesscountry = $partner['country_id'][1];
+    $message->businesspostalcode = $partner['zip'];
+    if ($partner['state_id']) $message->businessstate = $partner['state_id'][1];
+    $message->businessstreet = $partner['street'];
+    $message->businessfaxnumber = $partner['fax'];
+    $message->businessphonenumber = $partner['phone'];
+    if ($partner['company_id']) $message->companyname = $partner['company_id'][1];
+    $message->email1address = $partner['email'];
+    $message->fileas = $partner['name'];
+
+    $names = preg_split('/\s+/', $partner['name'], 3, PREG_SPLIT_NO_EMPTY);
+    if (count($names) == 1) $message->firstname = $names[0];
+    if (count($names) == 3) {
+      $message->firstname = $names[0];
+      $message->middlename = $names[1];
+      $message->lastname = $names[2];
+    }
+    else if (count($names) == 2) {
+      $message->firstname = $names[0];
+      $message->lastname = $names[1];
+    }
+
+    $message->jobtitle = $partner['function'];
+    $message->title = $partner['title'];
+    $message->webpage = $partner['website'];
+
+    $message->categories = array_map(function ($category) {
+      return $category['name'];
+    }, $categories);
+
+    $body = $partner['comment'];
+    $message->bodytruncated = false;
+    if(strlen($body) > $truncsize) {
+      $body = Utils::Utf8_truncate($body, $truncsize);
+      $message->bodytruncated = true;
+    }
+    $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
+    $message->asbody = new SyncBaseBody();
+
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
+    return $message;
+  }
+
   public function StatMessage($folderid, $id) {
     if ($folderid == 'calendar') {
       $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
@@ -379,6 +479,24 @@ class BackendOdoo extends BackendDiff {
       return [
         'id' => 'event_' . $event['id'],
         'mod' => strtotime($event['write_date']),
+        'flags' => 1
+      ];
+    }
+    else if ($folderid == 'partners') {
+      $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'res.partner', 'search_read', [[
+          ['id', '=', intval(substr($id, 8))]
+        ]], [
+          'fields' => ['id', 'write_date']
+        ]
+      );
+
+      if (!count($partners)) return false;
+      $partner = $partners[0];
+
+      return [
+        'id' => 'partner_' . $partner['id'],
+        'mod' => strtotime($partner['write_date']),
         'flags' => 1
       ];
     }
