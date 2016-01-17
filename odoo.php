@@ -554,7 +554,6 @@ class BackendOdoo extends BackendDiff {
       $body = Utils::Utf8_truncate($body, $truncsize);
       $message->bodytruncated = true;
     }
-    file_put_contents('/home/stefan/test_log/'.$task['name'], $body);
     $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
     $message->asbody = new SyncBaseBody();
     $message->asbody->data = $body;
