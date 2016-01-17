@@ -528,7 +528,7 @@ class BackendOdoo extends BackendDiff {
       ]
     );
     if (!count($tasks)) {
-      $message = new SyncContact();
+      $message = new SyncTask();
       $message->deleted = 1;
       return $message;
     }
