@@ -419,14 +419,30 @@ class BackendOdoo extends BackendDiff {
       return $syncattendee;
     }, $attendees);
 
-    $body = $event['description'];
-    $message->bodytruncated = false;
-    if(strlen($body) > $truncsize) {
-      $body = Utils::Utf8_truncate($body, $truncsize);
-      $message->bodytruncated = true;
+    if (Request::GetProtocolVersion() >= 12.0) {
+      $message->asbody = new SyncBaseBody();
+      $message->asbody->type = SYNC_BODYPREFERENCE_PLAIN;
+      $message->asbody->data = $event['description'];
+      $message->asbody->estimatedDataSize = mb_strlen($event['description'], 'UTF-8');
+
+      if ($message->asbody->estimatedDataSize > $truncsize) {
+        $message->asbody->data = Utils::Utf8_truncate($message->asbody->data, $truncsize);
+        $message->asbody->truncated = 1;
+      }
+
+      if (Request::GetProtocolVersion() >= 14.0) {
+        $message->asbody->preview = $event['project_id'][1];
+      }
     }
-    $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $body));
-    $message->asbody = new SyncBaseBody();
+    else {
+      $message->body = $event['description'];
+      $message->body = str_replace("\n", "\r\n", str_replace("\r", "", $message->body));
+      $message->bodysize = mb_strlen($event['description'], 'UTF-8');
+      if(strlen($message->body) > $truncsize) {
+        $message->body = Utils::Utf8_truncate($message->body, $truncsize);
+        $message->bodytruncated = 1;
+      }
+    }
 
     $message->categories = array_map(function ($category) {
       return $category['name'];
