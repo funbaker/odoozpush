@@ -1,3 +1,4 @@
 [submodule "ripcord"]
 	path = ripcord
-	url = https://github.com/odom/ripcord.git
+	url = https://github.com/funbaker/ripcord.git
+	branch = master
