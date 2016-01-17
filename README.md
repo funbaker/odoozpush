@@ -4,6 +4,7 @@ Odoo Backend for z-push http://www.zpush.org/
 # Features
 * Calendar Sync
 * Partner Contacts Sync (Persons only)
+* Task Sync
 
 # Installation
 Change into the z-push backend directory<br>
