@@ -13,10 +13,11 @@ Change into the z-push backend directory<br>
 Clone this project<br>
 `git clone https://github.com/funbaker/odoozpush.git odoo`
 
-Define backend provider
+Configure z-push
 ```php
 # /path/to/z-push/config.php
 define('BACKEND_PROVIDER', 'Odoo');
+define('USE_FULLEMAIL_FOR_LOGIN', true);
 ```
 Define odoo url and database
 ```php
