@@ -11,7 +11,12 @@ Change into the z-push backend directory<br>
 `cd /path/to/z-push/backend/`
 
 Clone this project<br>
-`git clone https://github.com/funbaker/odoozpush.git odoo`
+```
+git clone https://github.com/funbaker/odoozpush.git odoo
+cd odoo
+git submodule init ripcord
+git submodule update ripcord
+```
 
 Configure z-push
 ```php
