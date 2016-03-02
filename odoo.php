@@ -429,10 +429,6 @@ class BackendOdoo extends BackendDiff {
         $message->asbody->data = Utils::Utf8_truncate($message->asbody->data, $truncsize);
         $message->asbody->truncated = 1;
       }
-
-      if (Request::GetProtocolVersion() >= 14.0) {
-        $message->asbody->preview = $event['project_id'][1];
-      }
     }
     else {
       $message->body = $event['description'];
@@ -558,8 +554,15 @@ class BackendOdoo extends BackendDiff {
       return false;
     }
 
-    $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'project.tags', 'read', [$task['tag_ids']], ['fields' => []]);
+    $categories = []
+    if (isset($task['tag_ids'])) {
+      $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'project.tags', 'read', [$task['tag_ids']], ['fields' => []]);
+    }
+    if (isset($task['categ_ids'])) {
+      $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'project.tags', 'read', [$task['categ_ids']], ['fields' => []]);
+    }
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $categories = (' . print_r($categories, true)) . ')';
 
     $message = new SyncTask();
@@ -590,6 +593,10 @@ class BackendOdoo extends BackendDiff {
     $message->startdate = strtotime($task['date_start']);
     $message->utcstartdate = strtotime($task['date_start']);
     $message->subject = $task['name'];
+
+    $message->categories = array_map(function ($category) {
+      return $category['name'];
+    }, $categories);
 
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetMessage: $message = (' . print_r($message, true) . ')');
     return $message;
