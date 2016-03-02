@@ -554,7 +554,7 @@ class BackendOdoo extends BackendDiff {
       return false;
     }
 
-    $categories = []
+    $categories = [];
     if (isset($task['tag_ids'])) {
       $categories = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
         'project.tags', 'read', [$task['tag_ids']], ['fields' => []]);
