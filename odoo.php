@@ -125,7 +125,7 @@ class BackendOdoo extends BackendDiff {
     if ($folderid == 'calendar') {
       try {
         $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-          'calendar.event', 'search_read', [['|', '&',
+          'calendar.event', 'search_read', [['|',
             ['user_id', '=', $this->uid],
             ['partner_ids', 'in', [$this->partnerID]],
             ['write_date', '>=', $cutoffdate]
