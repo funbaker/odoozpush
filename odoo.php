@@ -662,7 +662,151 @@ class BackendOdoo extends BackendDiff {
   }
 
 	public function ChangeMessage($folderid, $id, $message, $contentParameters) {
+    if ($folderid == 'calendar') {
+      $this->ChangeEvent($id, $message, $contentParameters);
+    }
+
     return false;
+  }
+
+  protected function ChangeEvent($id, $message, $contentParameters) {
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: message = (' . print_r($message, true)) . ')';
+
+    $eventID = intval(substr($id, 6));
+
+    $attendees = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.attendee', 'search_read', [[
+        ['event_id', '=', $eventID]
+      ]], [
+        'fields' => ['cn', 'email', 'state']
+      ]
+    );
+
+    $bias = $this->getTimezoneBias($message->timezone);
+    $starttime = $message->starttime - $bias;
+    $stop = $message->endtime - $bias;
+
+    $vals = [
+      'start' => date("Y-m-d H:i:s", $starttime),
+      'name' => $message->subject,
+      //organizer
+      'location' => $message->location,
+      'stop' => date("Y-m-d H:i:s", $stop)
+    ];
+    //recurrence
+    if ($message->recurrence) {
+      $vals['recurrency'] = true;
+      $recurrence = $message->recurrence;
+
+      switch ($recurrence->type) {
+        case '0':
+          $vals['rrule_type'] = 'daily';
+          break;
+        case 1:
+          $vals['rrule_type'] = 'weekly';
+          break;
+        case 2:
+          $vals['rrule_type'] = 'monthly';
+          $vals['day'] = intval($recurrence->dayofmonth);
+          break;
+        case 3:
+          $vals['rrule_type'] = 'monthly';
+          $vals['month_by'] = 'day';
+          break;
+        case 5:
+          $vals['rrule_type'] = 'yearly';
+          break;
+      }
+
+      $vals['final_date'] = date("Y-m-d H:i:s", $message->until);
+      $vals['count'] = intval($recurrence->occurrences);
+      $vals['interval'] = intval($recurrence->interval);
+
+      $daynum = [
+        'su' => 1,
+        'mo' => 2,
+        'tu' => 4,
+        'we' => 8,
+        'th' => 16,
+        'fr' => 32,
+        'sa' => 64
+      ];
+      //dayofweek
+      foreach ($daynum as $day => $number) {
+        $vals[$day] = false;
+        if (($recurrence->dayofweek & $number) == $number) $vals[$day] = true;
+      }
+
+      $vals['byday'] = $recurrence->weekofmonth == 5 ? -1 : intval($recurrence->weekofmonth);
+
+      foreach ($daynum as $day => $number) {
+        if (($recurrence->dayofweek & $number) == $number) $vals['week_list'] = strtoupper($day);
+      }
+    }
+
+    $vals['class'] = [
+      0 => 'public',
+      1 => 'private',
+      2 => 'private',
+      3 => 'confidential'
+    ][$message->sensitivity];
+
+    $vals['show_as'] = [
+      0 => 'free',
+      2 => 'busy'
+    ][$message->busystatus];
+
+    $vals['allday'] = boolval($message->alldayevent);
+
+    /*$attendeesServer = array_map(function ($attendee) {
+      return $attendee['cn'];
+    }, $attendees);
+    $attendeesClient = array_map(function ($attendee) {
+      return $attendee->name;
+    }, $message->attendees);
+
+    $delete = array_diff($attendeesServer, $attendeesClient);
+    $insert = array_diff($attendeesClient, $attendeesServer);
+
+    $deleteIds = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.attendee', 'search', [[
+          ['cn', 'in', $delete]
+      ]]
+    );
+    $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.attendee', 'unlink', [$deleteIds]
+    );
+
+    $insertIds = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.attendee', 'search', [[
+          ['cn', 'in', $insert]
+      ]]
+    );
+
+    foreach ($insert as $name) {
+      $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'res.partner', 'search_read', [[
+          ['name', '=', $name]
+        ]],
+        ['fields' => []]
+      );
+
+      if ($partners) {
+        $partner = $partner[0];
+        $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+          'calendar.attendee', 'create', [[
+            'event_id' => $eventID,
+            'partner_id' => $partner['id']
+          ]]
+        );
+      }
+    }*/
+
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: vals = (' . print_r($vals, true)) . ')';
+
+    $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'calendar.event', 'write', [[$eventID], $vals]
+    );
   }
 
 	public function SetReadFlag($folderid, $id, $flags, $contentParameters) {
@@ -679,6 +823,11 @@ class BackendOdoo extends BackendDiff {
 
   protected function getUTC() {
     return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
+  }
+
+  protected function getTimezoneBias($tzstr) {
+    $up = unpack('la64vvvvvvvvla64vvvvvvvvl', base64_decode($tzstr));
+    return intval($up[1]);
   }
 }
 ?>
