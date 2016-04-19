@@ -6,6 +6,7 @@ require_once('backend/odoo/ripcord/ripcord.php');
 
 class BackendOdoo extends BackendDiff {
   protected $uid = false;
+  protected $utz;
   protected $password = false;
   protected $models = null;
   protected $partnerID = false;
@@ -17,6 +18,8 @@ class BackendOdoo extends BackendDiff {
   public function Logon($username, $domain, $password) {
     $common = ripcord::client(ODOO_SERVER . '/xmlrpc/2/common');
     $this->uid = $common->authenticate(ODOO_DB, $username, $password, []);
+    $this->username = $username;
+    $this->domain = $domain;
     $this->password = $password;
 
     if ($this->uid) {
@@ -37,6 +40,18 @@ class BackendOdoo extends BackendDiff {
 
       $this->partnerID = $partners[0]['partner_id'][0];
       ZLOG::Write(LOGLEVEL_INFO, 'Odoo:Logon: Logged in with partner/user id ' . $this->partnerID . '/' . $this->uid);
+
+      # timezone
+      $users = $this->models->execute_kw(ODOO_DB, $this->uid, $password,
+        'res.users', 'search_read', [[
+          ['id', '=', $this->uid]
+        ]], [
+          'fields' => ['tz']
+        ]
+      );
+      $user = $users[0];
+      $this->utz = $user['tz'];
+
       return true;
     }
     return false;
@@ -47,7 +62,7 @@ class BackendOdoo extends BackendDiff {
   }
 
 	public function SendMail($sm) {
-    return false;//not implemented
+    return true;//not implemented
   }
 
 	public function GetWasteBasket() {
@@ -225,13 +240,16 @@ class BackendOdoo extends BackendDiff {
     $truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
 
     $events = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.event', 'search_read', [['|', '&',
+      'calendar.event', 'search_read', [['|',
         ['user_id', '=', $this->uid],
         ['partner_ids', 'in', [$this->partnerID]],
         ['id', '=', intval(substr($id, 6))]
       ]],
       ['fields' => []]
     );
+
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::GetEvent: $events = (' . print_r($events, true) . ')');
+
     if (!count($events)) {
       $message = new SyncAppointment();
       $message->deleted = 1;
@@ -266,8 +284,11 @@ class BackendOdoo extends BackendDiff {
     $message = new SyncAppointment();
     $message->uid = $event['id'];
     $message->dtstamp = strtotime($event['write_date']);
-    $message->starttime = strtotime($event['start']);
-    $message->timezone = $this->getUTC();
+    $message->starttime = strtotime($event['start'])
+      + $this->_getTimezoneOffset($this->utz);
+    $message->endtime = strtotime($event['stop'])
+      + $this->_getTimezoneOffset($this->utz);
+    $message->timezone = $this->_GetTimezoneString($this->utz);
     $message->subject = $event['name'];
 
     if (count($attendees) != 0) {
@@ -276,7 +297,6 @@ class BackendOdoo extends BackendDiff {
     }
 
     $message->location = $event['location'];
-    $message->endtime = strtotime($event['stop']);
 
     if ($event['recurrency']) {
       $recurrence = new SyncRecurrence();
@@ -663,28 +683,19 @@ class BackendOdoo extends BackendDiff {
 
 	public function ChangeMessage($folderid, $id, $message, $contentParameters) {
     if ($folderid == 'calendar') {
-      $this->ChangeEvent($id, $message, $contentParameters);
+      return $this->ChangeEvent($folderid, $id, $message, $contentParameters);
     }
 
     return false;
   }
 
-  protected function ChangeEvent($id, $message, $contentParameters) {
+  protected function ChangeEvent($folderid, $id, $message, $contentParameters) {
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: message = (' . print_r($message, true)) . ')';
 
-    $eventID = intval(substr($id, 6));
-
-    $attendees = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.attendee', 'search_read', [[
-        ['event_id', '=', $eventID]
-      ]], [
-        'fields' => ['cn', 'email', 'state']
-      ]
-    );
-
-    $bias = $this->getTimezoneBias($message->timezone);
-    $starttime = $message->starttime - $bias;
-    $stop = $message->endtime - $bias;
+    $starttime = $message->starttime - $this->_getTimezoneOffset($this->utz)
+      + _getOffsetFromTimezoneString($message->timezone);
+    $stop = $message->endtime - $this->_getTimezoneOffset($this->utz)
+      + _getOffsetFromTimezoneString($message->timezone);
 
     $vals = [
       'start' => date("Y-m-d H:i:s", $starttime),
@@ -758,55 +769,30 @@ class BackendOdoo extends BackendDiff {
 
     $vals['allday'] = boolval($message->alldayevent);
 
-    /*$attendeesServer = array_map(function ($attendee) {
-      return $attendee['cn'];
-    }, $attendees);
-    $attendeesClient = array_map(function ($attendee) {
-      return $attendee->name;
-    }, $message->attendees);
-
-    $delete = array_diff($attendeesServer, $attendeesClient);
-    $insert = array_diff($attendeesClient, $attendeesServer);
-
-    $deleteIds = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.attendee', 'search', [[
-          ['cn', 'in', $delete]
-      ]]
-    );
-    $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.attendee', 'unlink', [$deleteIds]
-    );
-
-    $insertIds = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.attendee', 'search', [[
-          ['cn', 'in', $insert]
-      ]]
-    );
-
-    foreach ($insert as $name) {
-      $partners = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-        'res.partner', 'search_read', [[
-          ['name', '=', $name]
-        ]],
-        ['fields' => []]
-      );
-
-      if ($partners) {
-        $partner = $partner[0];
-        $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-          'calendar.attendee', 'create', [[
-            'event_id' => $eventID,
-            'partner_id' => $partner['id']
-          ]]
-        );
-      }
-    }*/
-
     ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: vals = (' . print_r($vals, true)) . ')';
 
-    $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
-      'calendar.event', 'write', [[$eventID], $vals]
-    );
+    if ($id) {
+      $eventID = intval(substr($id, 6));
+      $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'calendar.event', 'write', [[$eventID], $vals]
+      );
+    }
+    else {
+      $id = intval($this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+        'calendar.event', 'create', [$vals]
+      ));
+      $eventID = 'event_' . $id;
+    }
+
+    $stat = [
+      'id' => $eventID,
+      'mod' => "*",
+      'flags' => 1
+    ];
+    #$stat = $this->StatMessage($folderid, $id);
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: eventID = (' . $eventID . ')');
+    ZLog::Write(LOGLEVEL_DEBUG, 'Odoo::ChangeEvent: stat = (' . print_r($stat, true)) . ')';
+    return $stat;
   }
 
 	public function SetReadFlag($folderid, $id, $flags, $contentParameters) {
@@ -821,13 +807,101 @@ class BackendOdoo extends BackendDiff {
     return false;
   }
 
-  protected function getUTC() {
+  protected function _getUTC() {
     return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
   }
 
-  protected function getTimezoneBias($tzstr) {
-    $up = unpack('la64vvvvvvvvla64vvvvvvvvl', base64_decode($tzstr));
-    return intval($up[1]);
+  private function _getOffsetFromTimezoneString($tz_string) {
+    //Get a list of all timezones
+    $identifiers = DateTimeZone::listIdentifiers();
+    //Try the default timezone first
+    array_unshift($identifiers, date_default_timezone_get());
+    foreach ($identifiers as $tz) {
+        $str = $this->_getTimezoneString($tz, false);
+        if ($str == $tz_string) {
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCalDAV->_GetTimezoneFromString(): Found timezone: '%s'.", $tz));
+            return $this->_getTimezoneOffset($tz);
+        }
+    }
+    return 0;
+  }
+
+  /**
+   * Generate ActiveSync Timezone Packed String.
+   * @param string $timezone
+   * @param string $with_names
+   * @throws Exception
+   * @copyright see https://github.com/fmbiete/Z-Push-contrib/blob/master/backend/caldav/caldav.php
+   */
+  //This returns a timezone that matches the timezonestring.
+  //We can't be sure this is the one you chose, as multiple timezones have same timezonestring
+  protected function _getTimezoneString($timezone, $with_names = true) {
+    // UTC needs special handling
+    if ($timezone == "UTC")
+      return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    try {
+      //Generate a timezone string (PHP 5.3 needed for this)
+      $timezone = new DateTimeZone($timezone);
+      $trans = $timezone->getTransitions(time());
+      $stdTime = null;
+      $dstTime = null;
+      if (count($trans) < 3) {
+          throw new Exception();
+      }
+      if ($trans[1]['isdst'] == 1) {
+          $dstTime = $trans[1];
+          $stdTime = $trans[2];
+      }
+      else {
+          $dstTime = $trans[2];
+          $stdTime = $trans[1];
+      }
+      $stdTimeO = new DateTime($stdTime['time']);
+      $stdFirst = new DateTime(sprintf("first sun of %s %s", $stdTimeO->format('F'), $stdTimeO->format('Y')), timezone_open("UTC"));
+      $stdBias = $stdTime['offset'] / -60;
+      $stdName = $stdTime['abbr'];
+      $stdYear = 0;
+      $stdMonth = $stdTimeO->format('n');
+      $stdWeek = floor(($stdTimeO->format("j")-$stdFirst->format("j"))/7)+1;
+      $stdDay = $stdTimeO->format('w');
+      $stdHour = $stdTimeO->format('H');
+      $stdMinute = $stdTimeO->format('i');
+      $stdTimeO->add(new DateInterval('P7D'));
+      if ($stdTimeO->format('n') != $stdMonth) {
+          $stdWeek = 5;
+      }
+      $dstTimeO = new DateTime($dstTime['time']);
+      $dstFirst = new DateTime(sprintf("first sun of %s %s", $dstTimeO->format('F'), $dstTimeO->format('Y')), timezone_open("UTC"));
+      $dstName = $dstTime['abbr'];
+      $dstYear = 0;
+      $dstMonth = $dstTimeO->format('n');
+      $dstWeek = floor(($dstTimeO->format("j")-$dstFirst->format("j"))/7)+1;
+      $dstDay = $dstTimeO->format('w');
+      $dstHour = $dstTimeO->format('H');
+      $dstMinute = $dstTimeO->format('i');
+      $dstTimeO->add(new DateInterval('P7D'));
+      if ($dstTimeO->format('n') != $dstMonth) {
+        $dstWeek = 5;
+      }
+      $dstBias = ($dstTime['offset'] - $stdTime['offset']) / -60;
+      if ($with_names) {
+        return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', $stdBias, $stdName, 0, $stdMonth, $stdDay, $stdWeek, $stdHour, $stdMinute, 0, 0, 0, $dstName, 0, $dstMonth, $dstDay, $dstWeek, $dstHour, $dstMinute, 0, 0, $dstBias));
+      }
+      else {
+        return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', $stdBias, '', 0, $stdMonth, $stdDay, $stdWeek, $stdHour, $stdMinute, 0, 0, 0, '', 0, $dstMonth, $dstDay, $dstWeek, $dstHour, $dstMinute, 0, 0, $dstBias));
+      }
+    }
+    catch (Exception $e) {
+      // If invalid timezone is given, we return UTC
+      return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    }
+    return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
+  }
+
+  protected function _getTimezoneOffset($tz) {
+    $dateTZ = new DateTimeZone($tz);
+    $now = new DateTime("now", $dateTZ);
+    return $dateTZ->getOffset($now);
   }
 }
 ?>
