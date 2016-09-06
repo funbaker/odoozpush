@@ -4,12 +4,98 @@ require_once("backend/odoo/config.php");
 require_once('lib/default/diffbackend/diffbackend.php');
 require_once('backend/odoo/ripcord/ripcord.php');
 
+$odoo_field_map = [
+  SYNC_GAL_DISPLAYNAME    => 'display_name',
+  SYNC_GAL_PHONE          => 'phone',
+  SYNC_GAL_OFFICE         => '',
+  SYNC_GAL_TITLE          => 'title',
+  SYNC_GAL_COMPANY        => 'company_id',
+  SYNC_GAL_ALIAS          => 'name',
+  SYNC_GAL_FIRSTNAME      => 'givenname',
+  SYNC_GAL_LASTNAME       => 'sn',
+  SYNC_GAL_HOMEPHONE      => 'homephone',
+  SYNC_GAL_MOBILEPHONE    => 'mobile',
+  SYNC_GAL_EMAILADDRESS   => 'mail',
+]
+
+class OdooSearchProvider extends SearchProvider {
+  public $models;
+
+  public function GetGALSearchResults($searchquery, $searchrange) {
+    // range for the search results, default symbian range end is 50, wm 99,
+    // so we'll use that of nokia
+    $rangestart = 0;
+    $rangeend = 50;
+
+    if ($searchrange != '0') {
+        $pos = strpos($searchrange, '-');
+        $rangestart = substr($searchrange, 0, $pos);
+        $rangeend = substr($searchrange, ($pos + 1));
+    }
+    $items = array();
+
+    $searchresults = $this->models->execute_kw(ODOO_DB, $this->uid, $this->password,
+      'res.partner', 'search_read', [[
+        ['is_company', '!=', 'True']
+      ]], [
+        'fields' => [],
+        'orderby' => ['name'],
+        'offset' => $rangestart,
+        'limit' => $rangeend
+      ]
+    );
+
+    // TODO the limiting of the searchresults could be refactored into Utils as it's probably used more than once
+    $querycnt = count($searchresults);
+    //do not return more results as requested in range
+    $items['range'] = $rangestart.'-'.($querycnt-1);
+    $items['searchtotal'] = $querycnt;
+
+    $rc = 0;
+    foreach ($searchresults as $rc => $searchresult) {
+      $item[$rc][SYNC_GAL_DISPLAYNAME] = $searchresult['display_name']
+      $item[$rc][SYNC_GAL_PHONE] = $searchresult['phone']
+      $item[$rc][SYNC_GAL_OFFICE] = ''
+      $item[$rc][SYNC_GAL_TITLE] = $searchresult['title']
+      $item[$rc][SYNC_GAL_COMPANY] = $searchresult['company_id']
+      $item[$rc][SYNC_GAL_ALIAS] = $searchresult['name']
+      $item[$rc][SYNC_GAL_FIRSTNAME] = $searchresult['name']
+      $item[$rc][SYNC_GAL_LASTNAME] = $searchresult['name']
+      $item[$rc][SYNC_GAL_HOMEPHONE] = ''
+      $item[$rc][SYNC_GAL_MOBILEPHONE] = $searchresult['mobile']
+      $item[$rc][SYNC_GAL_EMAILADDRESS] = $searchresult['email']
+
+        foreach ($odoo_field_map as $key=>$value ) {
+            if (isset($searchresult[$i][$value])) {
+                if (is_array($searchresult[$i][$value]))
+                    $items[$rc][$key] = $searchresult[$i][$value][0];
+                else
+                    $items[$rc][$key] = $searchresult[$i][$value];
+            }
+        }
+        $rc++;
+    }
+
+    return $items;
+  }
+}
+
 class BackendOdoo extends BackendDiff {
   protected $uid = false;
   protected $utz;
   protected $password = false;
   protected $models = null;
   protected $partnerID = false;
+
+  protected $searchProvider = null;
+
+  public function GetSearchProvider() {
+    if(is_null($this->searchProvider)) {
+      $this->searchProvider = new OdooSearchProvider();
+      $this->searchProvider->models = $this->models;
+    }
+    return $this->searchProvider;
+  }
 
   public function GetSupportedASVersion() {
         return ZPush::ASV_14;
